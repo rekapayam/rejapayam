@@ -152,7 +152,9 @@
 (function () {
   "use strict";
 
-  var FEED_CATEGORIES = ["Bekatul", "Karak Nasi"];
+  var FEED_CATEGORIES = ["Bekatul", "Karak Nasi", "Voer", "Vitamin"];
+  var FEED_UNITS = { "Bekatul": "kg", "Karak Nasi": "kg", "Voer": "kg", "Vitamin": "saset" };
+  function feedUnit(jenis) { return FEED_UNITS[jenis] || "kg"; }
   var URL_KEY = "rekap-ayam-api-url";
   var state = { tab: "penjualan", sales: [], feed: [], loading: true, busy: false };
 
@@ -273,11 +275,13 @@
     var totalJual = state.sales.reduce(function (a, s) { return a + s.total; }, 0);
     var totalPakanKg = state.feed.reduce(function (a, f) { return a + f.jumlah; }, 0);
     var totalPakanRp = state.feed.reduce(function (a, f) { return a + f.total; }, 0);
-    var totalBekatulKg = state.feed.filter(function (f) { return f.jenis === "Bekatul"; }).reduce(function (a, f) { return a + f.jumlah; }, 0);
-    var totalKarakKg = state.feed.filter(function (f) { return f.jenis === "Karak Nasi"; }).reduce(function (a, f) { return a + f.jumlah; }, 0);
+    var catKg = {};
+    FEED_CATEGORIES.forEach(function (cat) {
+      catKg[cat] = state.feed.filter(function (f) { return f.jenis === cat; }).reduce(function (a, f) { return a + f.jumlah; }, 0);
+    });
     return {
       totalEkor: totalEkor, totalJual: totalJual, totalPakanKg: totalPakanKg, totalPakanRp: totalPakanRp,
-      totalBekatulKg: totalBekatulKg, totalKarakKg: totalKarakKg, laba: totalJual - totalPakanRp
+      catKg: catKg, laba: totalJual - totalPakanRp
     };
   }
 
@@ -345,16 +349,18 @@
   function feedTabHTML() {
     var catCards = FEED_CATEGORIES.map(function (cat) {
       var items = state.feed.filter(function (f) { return f.jenis === cat; });
-      var kg = items.reduce(function (a, f) { return a + f.jumlah; }, 0);
+      var qty = items.reduce(function (a, f) { return a + f.jumlah; }, 0);
       var rp = items.reduce(function (a, f) { return a + f.total; }, 0);
-      return '<div class="cat-card"><div class="lbl">' + esc(cat) + '</div><div class="rp mono">' + fmtRp(rp) + '</div><div class="kg mono">' + kg.toLocaleString("id-ID") + " kg</div></div>";
+      var unit = feedUnit(cat);
+      return '<div class="cat-card"><div class="lbl">' + esc(cat) + '</div><div class="rp mono">' + fmtRp(rp) + '</div><div class="kg mono">' + qty.toLocaleString("id-ID") + " " + unit + "</div></div>";
     }).join("");
 
     var rows = state.feed.map(function (f) {
+      var unit = feedUnit(f.jenis);
       return "<tr><td>" + fmtDate(f.tanggal) + "</td>" +
         "<td>" + esc(f.jenis) + "</td>" +
-        '<td class="mono">' + f.jumlah + " kg</td>" +
-        '<td class="mono">' + fmtRp(f.harga) + "</td>" +
+        '<td class="mono">' + f.jumlah + " " + unit + "</td>" +
+        '<td class="mono">' + fmtRp(f.harga) + "/" + unit + "</td>" +
         '<td class="r mono" style="color:#5B7B4F;font-weight:600">' + fmtRp(f.total) + "</td>" +
         '<td class="r"><button class="del-btn" data-del-feed="' + esc(f.id) + '">🗑</button></td></tr>';
     }).join("");
@@ -364,15 +370,15 @@
     return (
       '<form class="entry" id="feed-form">' +
         '<div><label>Tanggal</label><input type="date" name="tanggal" value="' + todayStr() + '" required></div>' +
-        '<div><label>Kategori pakan</label><select name="jenis" required>' + options + "</select></div>" +
-        '<div><label>Jumlah (kg)</label><input type="number" min="0" step="0.1" name="jumlah" placeholder="0" required></div>' +
-        '<div><label>Harga / kg</label><input type="number" min="0" name="harga" placeholder="0" required></div>' +
+        '<div><label>Kategori pakan</label><select name="jenis" id="feed-jenis" required onchange="updateFeedUnit(this.value)">' + options + "</select></div>" +
+        '<div><label id="feed-qty-label">Jumlah (kg)</label><input type="number" id="feed-qty" min="0" step="0.1" name="jumlah" placeholder="0" required></div>' +
+        '<div><label id="feed-harga-label">Harga / kg</label><input type="number" min="0" name="harga" placeholder="0" required></div>' +
         '<button type="submit" class="btn-add" style="background:#5B7B4F"' + (state.busy ? " disabled" : "") + '>+ Tambah</button>' +
       "</form>" +
       (state.feed.length ? '<div class="cat-cards">' + catCards + "</div>" : "") +
       (state.feed.length === 0
         ? '<div class="empty">Belum ada pengeluaran pakan. Tambahkan catatan pertama di atas.</div>'
-        : '<div class="table-wrap"><table><thead><tr><th>Tanggal</th><th>Kategori</th><th>Jumlah</th><th>Harga/kg</th><th class="r">Total</th><th></th></tr></thead><tbody>' + rows + "</tbody></table></div>")
+        : '<div class="table-wrap"><table><thead><tr><th>Tanggal</th><th>Kategori</th><th>Jumlah</th><th>Harga/satuan</th><th class="r">Total</th><th></th></tr></thead><tbody>' + rows + "</tbody></table></div>")
     );
   }
 
@@ -382,7 +388,10 @@
     }
     var map = {};
     function addTo(key, field, val) {
-      if (!map[key]) map[key] = { jual: 0, ekor: 0, pakanRp: 0, bekatulKg: 0, karakKg: 0 };
+      if (!map[key]) {
+        map[key] = { jual: 0, ekor: 0, pakanRp: 0 };
+        FEED_CATEGORIES.forEach(function (cat) { map[key][cat] = 0; });
+      }
       map[key][field] += val;
     }
     state.sales.forEach(function (s) {
@@ -393,8 +402,7 @@
     state.feed.forEach(function (f) {
       var key = String(f.tanggal).slice(0, 7);
       addTo(key, "pakanRp", f.total);
-      if (f.jenis === "Bekatul") addTo(key, "bekatulKg", f.jumlah);
-      if (f.jenis === "Karak Nasi") addTo(key, "karakKg", f.jumlah);
+      if (FEED_CATEGORIES.indexOf(f.jenis) !== -1) addTo(key, f.jenis, f.jumlah);
     });
     var keys = Object.keys(map).sort().reverse();
 
@@ -404,30 +412,35 @@
       return d.toLocaleDateString("id-ID", { month: "long", year: "numeric" });
     }
 
+    var catHeaders = FEED_CATEGORIES.map(function (cat) { return '<th class="r">' + esc(cat) + ' (' + feedUnit(cat) + ')</th>'; }).join("");
     var rows = keys.map(function (key) {
       var v = map[key];
       var selisih = v.jual - v.pakanRp;
       var positive = selisih >= 0;
+      var catCols = FEED_CATEGORIES.map(function (cat) {
+        return '<td class="r mono">' + (v[cat] || 0).toLocaleString("id-ID") + "</td>";
+      }).join("");
       return "<tr><td style='font-weight:500'>" + esc(monthLabel(key)) + "</td>" +
         '<td class="r mono">' + v.ekor.toLocaleString("id-ID") + "</td>" +
         '<td class="r mono">' + fmtRp(v.jual) + "</td>" +
-        '<td class="r mono">' + v.bekatulKg.toLocaleString("id-ID") + "</td>" +
-        '<td class="r mono">' + v.karakKg.toLocaleString("id-ID") + "</td>" +
+        catCols +
         '<td class="r mono">' + fmtRp(v.pakanRp) + "</td>" +
         '<td class="r mono" style="color:' + (positive ? "#4C6741" : "#92301A") + '">' + (positive ? "+" : "") + fmtRp(selisih) + "</td></tr>";
     }).join("");
 
     var t = computeTotals();
     var posAll = t.laba >= 0;
+    var catTotals = FEED_CATEGORIES.map(function (cat) {
+      return '<td class="r mono">' + (t.catKg[cat] || 0).toLocaleString("id-ID") + "</td>";
+    }).join("");
     var foot = "<tr><td>Total</td>" +
       '<td class="r mono">' + t.totalEkor.toLocaleString("id-ID") + "</td>" +
       '<td class="r mono">' + fmtRp(t.totalJual) + "</td>" +
-      '<td class="r mono">' + t.totalBekatulKg.toLocaleString("id-ID") + "</td>" +
-      '<td class="r mono">' + t.totalKarakKg.toLocaleString("id-ID") + "</td>" +
+      catTotals +
       '<td class="r mono">' + fmtRp(t.totalPakanRp) + "</td>" +
       '<td class="r mono" style="color:' + (posAll ? "#4C6741" : "#92301A") + '">' + (posAll ? "+" : "") + fmtRp(t.laba) + "</td></tr>";
 
-    return '<div class="table-wrap"><table><thead><tr><th>Bulan</th><th class="r">Ekor terjual</th><th class="r">Penjualan</th><th class="r">Bekatul (kg)</th><th class="r">Karak Nasi (kg)</th><th class="r">Pengeluaran pakan</th><th class="r">Selisih</th></tr></thead><tbody>' + rows + "</tbody><tfoot>" + foot + "</tfoot></table></div>";
+    return '<div class="table-wrap"><table><thead><tr><th>Bulan</th><th class="r">Ekor terjual</th><th class="r">Penjualan</th>' + catHeaders + '<th class="r">Total pakan</th><th class="r">Selisih</th></tr></thead><tbody>' + rows + "</tbody><tfoot>" + foot + "</tfoot></table></div>";
   }
 
   // ---------- events ----------
@@ -485,6 +498,17 @@
     renderTabs();
     renderContent();
   }
+
+  // expose globally for inline onchange
+  window.updateFeedUnit = function (jenis) {
+    var unit = feedUnit(jenis);
+    var qtyLabel = document.getElementById("feed-qty-label");
+    var hargaLabel = document.getElementById("feed-harga-label");
+    var qtyInput = document.getElementById("feed-qty");
+    if (qtyLabel) qtyLabel.textContent = "Jumlah (" + unit + ")";
+    if (hargaLabel) hargaLabel.textContent = "Harga / " + unit;
+    if (qtyInput) qtyInput.step = unit === "saset" ? "1" : "0.1";
+  };
 
   // ---------- boot ----------
   var apiUrl = getApiUrl();
